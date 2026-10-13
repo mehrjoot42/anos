@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# LaTeX
+*.aux
+*.log
+*.out
+*.toc
+*.lof
+*.lot
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.bbl
+*.blg
+*.bcf
+*.run.xml
+*.synctex(busy)
+*.tpt
+# خط *.pdf حذف شد تا شکل‌های PDF لاتک ایگنور نشوند.
+# اگر می‌خواهید فقط PDF نهایی مقاله را ایگنور کنید، خط زیر را از حالت کامنت خارج کنید:
+# Article04.pdf
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+
+# Secrets
+.env
+*.key
+*.pem
+
+# OONI raw data (حجیم)
+ooni_data/raw/
+# اگر JSONهای خلاصه کوچک هستند، این خط را کامنت کنید:
+# ooni_data/*.json
+# ooni_data/*.jsonl
+
+# Drafts
+Document.rtf

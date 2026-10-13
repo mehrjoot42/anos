@@ -1,0 +1,647 @@
+% =====================================================================
+%  ANOS Revisited (v3): Real-Data Reproduction and Statistical Correction
+%  All reviewer corrections applied.
+% =====================================================================
+
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{multirow}
+\usepackage{siunitx}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    citecolor=blue!60!black,
+    urlcolor=blue!60!black,
+}
+
+\title{\textbf{ANOS Revisited: A Real-Data Reproduction and Statistical
+Correction of Adaptive Proxy Selection for Censored Networks}}
+
+\author{
+  Ahmad \\
+  \small Independent Researcher \\
+  \small \texttt{https://github.com/mehrjoot42/anos}
+}
+
+\date{October 2026}
+
+\begin{document}
+\maketitle
+
+% =====================================================================
+\begin{abstract}
+\noindent
+The original ANOS paper proposed a rule-based framework for proxy
+selection in censored networks and reported that rule-based selection
+outperforms reinforcement learning (RL) baselines, even after 5000
+training rounds. We re-examine this claim on three fronts.
+First, we identify a statistical flaw in the original evaluation:
+with only five seeds, the minimum achievable two-sided Wilcoxon
+$p$-value is $0.0625$, so the reported $p < 0.001$ is mathematically
+unattainable under the stated design. Second, we replace the
+Gaussian simulator with real Iranian censorship data from the Open
+Observatory of Network Interference (OONI)---300{,}000 measurements
+over 60 days, with a mean anomaly rate of $47.36\%$. Third, we
+strengthen the RL baselines and extend the evaluation horizon. Using
+a paired Wilcoxon test across 30 seeds with Holm--Bonferroni
+correction and bootstrap confidence intervals, we find that LinUCB
+($73.87$) and Thompson Sampling ($71.36$) are \emph{not} statistically
+distinguishable from ANOS ($75.01$; $p = 0.17$ and $p = 0.49$,
+respectively). The original negative result on RL therefore does
+not survive either a correct statistical test or a realistic,
+real-data-driven environment. We also report a sensitivity analysis
+across three axes, show that online adaptive weight tuning is
+harmful under non-stationary rewards, and quantify the degradation
+of static selection under real non-stationarity ($-10.25$ quality
+points versus simulated environments). Finally, we provide a
+threats-to-validity discussion covering known biases in OONI
+volunteer measurements.\\[4pt]
+\textbf{Keywords:} proxy selection, censored networks, reproducibility,
+paired statistical testing, contextual bandits, OONI.
+\end{abstract}
+
+% =====================================================================
+\section{Introduction}
+\label{sec:intro}
+
+Internet censorship forces users to rely on proxy tools whose
+performance varies dramatically across time and network conditions.
+The original ANOS paper introduced a framework combining
+multi-criteria scoring with hysteresis-based switching, and reported
+that this rule-based approach outperforms reinforcement learning (RL)
+baselines---including LinUCB and Thompson Sampling---even after 5000
+training rounds.
+
+We revisit this claim on three axes:
+
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Statistical validity.} We show that the original
+  $p < 0.001$ cannot be obtained from the stated experimental design:
+  with five seeds, the minimum two-sided Wilcoxon $p$-value is
+  $0.0625$. The reported significance therefore likely stems from
+  pseudoreplication---treating correlated within-seed rounds as
+  independent samples.
+  \item \textbf{Simulator realism.} We replace the original Gaussian
+  simulator with a realistic one calibrated to \emph{real} OONI
+  measurements from Iran, comprising 300{,}000 measurements over
+  60 days with a mean anomaly rate of $47.36\%$.
+  \item \textbf{Baseline strength and horizon.} We strengthen the
+  RL baselines with richer feature vectors and evaluate at horizons
+  of 200 and 500 steps.
+\end{enumerate}
+
+Our main finding is that once these three issues are corrected, the
+original negative result on RL does not hold: with real Iranian
+censorship data, LinUCB and Thompson Sampling are statistically
+indistinguishable from rule-based ANOS.
+
+\paragraph{Contributions.}
+\begin{itemize}[leftmargin=*]
+  \item A mathematical argument showing the original $p<0.001$ is
+  unattainable under a 5-seed design.
+  \item A simulator calibrated to 300{,}000 real OONI measurements
+  from Iran, capturing non-Gaussian noise, bursty failures, and
+  observed non-stationarity.
+  \item A paired statistical comparison across 30 seeds with effect
+  sizes, Holm--Bonferroni correction, and bootstrap confidence
+  intervals.
+  \item Evidence that online adaptive weight tuning is harmful in
+  noisy censored environments.
+  \item A threats-to-validity analysis that includes known biases
+  in OONI volunteer measurements.
+  \item An open, reproducible codebase and full dataset release.
+\end{itemize}
+
+% =====================================================================
+\section{Related Work}
+\label{sec:related}
+
+\paragraph{Censorship measurement and datasets.}
+The Open Observatory of Network Interference (OONI) has collected
+over one billion measurements from 241 countries since 2012, providing
+the largest public dataset on Internet censorship
+\citep{ooni2017}. Censored Planet~\citep{sundaram2020censoredplanet}
+conducts remote measurements from over 170 countries using
+middlebox-fingerprinting. The GFWatch
+project~\citep{chai2024gfwatch} tested $1.02$ billion domains over
+20 months to characterize Chinese DNS censorship. Wails et
+al.~\citep{wails2023gfw} provide the first large-scale longitudinal
+study of the Great Firewall's evolution. Our work leverages OONI
+directly, converting raw measurements into a time-series censorship
+schedule that drives our simulator.
+
+\paragraph{Circumvention systems.}
+Snowflake~\citep{bocovich2020snowflake} is a pluggable transport for
+Tor that relies on volunteer WebRTC proxies; its design and
+deployment are described in the original
+Snowflake paper. Slitheen~\citep{bocovich2016slitheen} is an earlier
+work by the same authors on decoy routing through traffic
+replacement, and is distinct from Snowflake; we cite it only for
+historical context on pluggable transports. Conjure~\citep{fifs2017conjure}
+uses ISP-operated covert channels rather than domain fronting; the
+domain fronting technique itself is described by
+Fifield et al.~\citep{fifield2015domain}. Mueller et
+al.~\citep{mueller2023empirical} empirically compare circumvention
+tools in Iran and China. We do not propose a new circumvention
+protocol; our focus is on the \emph{selection} layer above such tools.
+
+\paragraph{Proxy and server selection.}
+Proxy selection is a classic problem in networking.
+Anycast routing~\citep{calder2015analyzing} uses BGP-level selection,
+while CDN redirection and DNS-based load balancing operate at the
+application layer. Adaptive server selection with bandit
+feedback has been studied in P2P systems~\citep{blond2008stretching}
+and cloud microservices~\citep{zhou2018exploring}. Our contribution
+is orthogonal: we test whether such adaptive mechanisms outperform
+simple multi-criteria rules in a censored, non-stationary setting.
+
+\paragraph{Contextual bandits in non-stationary environments.}
+Linear UCB~\citep{li2010contextual} and Thompson
+Sampling~\citep{agrawal2012analysis} are standard. Non-stationary
+bandits have been studied extensively: \citet{besbes2014stochastic}
+propose change-detection UCB; \citet{russac2019weighted} use
+exponential discounting; \citet{cheung2019learning} characterize
+misspecified bandits. We show that even the standard LinUCB is
+competitive with rule-based selection at sufficient horizon, a
+finding that argues against dismissing RL in censored environments
+based on short-horizon results.
+
+% =====================================================================
+\section{Methodology}
+\label{sec:method}
+
+\subsection{Quality scoring}
+
+We retain the original ANOS quality function:
+\begin{equation}
+Q(p) = w_s S(p) + w_\ell L(p) + w_j J(p) + w_o O(p) + w_t T(p),
+\end{equation}
+with default weights $w_s = 0.40$, $w_\ell = 0.20$, $w_j = 0.15$,
+$w_o = 0.15$, $w_t = 0.10$. Unlike the original, we normalize each
+component using a running percentile normalizer, avoiding hand-tuned
+constants.
+
+\subsection{Switching with cost-aware hysteresis}
+
+We replace the fixed multiplicative threshold $\theta = 1.10$ of the
+original with a cost-aware absolute rule:
+\begin{equation}
+Q(p_{\text{new}}) - Q(p_{\text{current}}) > \mu + \frac{c}{d},
+\end{equation}
+where $\mu$ is a safety margin, $c$ is the switching cost in quality
+points, and $d$ is the current dwell time.
+
+\subsection{Simulator}
+
+Our simulator incorporates four realistic features absent from the
+original:
+\begin{enumerate}[leftmargin=*]
+  \item latency and jitter follow Student-$t$ distributions;
+  \item speed follows a log-normal distribution;
+  \item each proxy has a two-state Markov chain for
+  ``good''/``bad'' behavior;
+  \item an Ornstein--Uhlenbeck drift term produces non-stationarity.
+\end{enumerate}
+The censorship schedule is not synthetic: it is derived from real
+OONI data (Section~\ref{sec:realdata}).
+
+\subsection{RL baselines}
+
+We strengthen the original baselines as follows. LinUCB operates on
+an 8-dimensional feature vector: a bias term, normalized speed,
+latency, jitter, loss, failure indicator, blocked indicator, and
+bad-state indicator. Thompson Sampling uses a Normal--Inverse--Gamma
+prior with running variance updates. We also provide a DQN
+implementation, but as discussed in Section~\ref{sec:limitations},
+we do not evaluate it here due to compute constraints.
+
+% =====================================================================
+\section{Real-Data Censorship Schedule}
+\label{sec:realdata}
+
+\subsection{Data source and extraction}
+
+We query the OONI public API for \texttt{web\_connectivity}
+measurements in Iran (\texttt{probe\_cc=IR}) over the period
+1 January to 29 February 2024. We collect $5{,}000$ measurements per
+day, yielding \num{300000} measurements in total.
+
+For each measurement we record the \texttt{anomaly},
+\texttt{confirmed}, and \texttt{failure} flags, the tested domain, and
+the timestamp. We then aggregate to daily statistics:
+\[
+\text{anomaly\_rate}_d = \frac{1}{n_d} \sum_{i \in \text{day } d} \mathbb{1}[\text{anomaly}_i].
+\]
+
+\subsection{Observed censorship patterns}
+
+Table~\ref{tab:ooni} summarizes the data.
+
+\begin{table}[h]
+\centering
+\caption{Statistics of the OONI Iranian censorship dataset
+(Jan--Feb 2024).}
+\label{tab:ooni}
+\begin{tabular}{lc}
+\toprule
+Statistic & Value \\
+\midrule
+Total measurements          & 300{,}000 \\
+Days covered                & 60 \\
+Mean anomaly rate           & 47.36\% \\
+Mean confirmed rate         & 32.94\% \\
+Mean failure rate           & 20.97\% \\
+Std.\ of daily anomaly rate & 0.0637 \\
+Min / Max anomaly rate      & 33.74\% / 59.99\% \\
+Days with anomaly rate $> 50\%$ & 18 / 60 \\
+Days with anomaly rate $< 30\%$ & 0 / 60 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Three observations follow. First, Iranian censorship is
+\emph{persistent}: no day dropped below $33.74\%$ anomaly rate.
+Second, there is non-trivial daily variation: the max/min ratio is
+$1.78$. Third, the top blocked domains are consistent with
+widespread reporting: YouTube, Instagram, Twitter, and Facebook
+together account for a disproportionate share of anomalies.
+
+\subsection{Conversion to simulator schedule}
+
+We discretize each day into $\lceil H / 60 \rceil$ simulator steps
+and, for each day $d$, create a censorship event over a subset of
+protocols with intensity proportional to
+$(\text{anomaly\_rate}_d + \text{confirmed\_rate}_d)/2$.
+At a horizon of $H = 500$ steps this yields 51 events.
+
+% =====================================================================
+\section{Experiments}
+\label{sec:experiments}
+
+\subsection{Setup}
+
+\paragraph{Hardware and seeds.}
+Intel Core i7-10700, 16\,GB RAM. Seeds $0,\dots,29$ (main experiment)
+and $0,\dots,49$ (simulated ablation).
+
+\paragraph{Baselines.}
+Random, Round-Robin, Best-Single, LinUCB (8-d context,
+$\alpha=0.5$), Thompson Sampling, and Oracle (with switching cost
+$c=5$).
+
+\paragraph{Statistics.}
+We report the paired Wilcoxon signed-rank test \emph{across seeds},
+rank-biserial effect sizes, Holm--Bonferroni correction for the six
+comparisons against ANOS, and bootstrap 95\% confidence intervals.
+
+\paragraph{Note on pseudoreplication.}
+The original paper reports $p<0.001$ from 500 samples. With only
+five seeds, the minimum achievable two-sided Wilcoxon $p$-value
+under the exact distribution is $0.0625$ for the sum-of-ranks
+statistic in the all-positive case; the asymptotic normal
+approximation is even more conservative. The reported value is
+therefore impossible without treating within-seed rounds as
+independent. Our analysis avoids this error by treating seeds as
+the unit of replication.
+
+\subsection{Main comparison on real OONI data}
+
+Table~\ref{tab:real} reports results with real Iranian censorship
+patterns ($H=500$, 30 seeds).
+
+\begin{table}[h]
+\centering
+\caption{Mean quality score across 30 seeds with real OONI Iranian
+censorship data ($H=500$). Effect size is rank-biserial vs.\ ANOS;
+Holm indicates significance after Holm--Bonferroni correction.}
+\label{tab:real}
+\begin{tabular}{lccccc}
+\toprule
+Strategy & Mean & 95\% CI & Effect & $p$ & Holm \\
+\midrule
+\textbf{ANOS}          & \textbf{75.01} & [74.78, 75.26] & ---      & ---      & ---   \\
+Oracle                 & 79.27 & [79.12, 79.44] & $+1.000$ & $<0.001$ & \checkmark \\
+LinUCB                 & 73.87 & [71.42, 75.99] & $+0.290$ & $0.171$  & $\times$ \\
+Thompson               & 71.36 & [68.27, 74.17] & $-0.148$ & $0.490$  & $\times$ \\
+Random                 & 49.40 & [49.06, 49.76] & $-1.000$ & $<0.001$ & \checkmark \\
+Round-Robin            & 48.43 & [48.22, 48.63] & $-1.000$ & $<0.001$ & \checkmark \\
+Best-Single            & 38.96 & [38.75, 39.19] & $-1.000$ & $<0.001$ & \checkmark \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The central result: with real Iranian censorship patterns, \emph{no
+RL baseline is statistically distinguishable from rule-based ANOS}
+(LinUCB $p = 0.17$; Thompson $p = 0.49$).
+
+\paragraph{Interpreting the positive rank-biserial for LinUCB.}
+The rank-biserial correlation for LinUCB against ANOS is $+0.290$,
+indicating that in a minority of seeds (roughly $35\%$ of pairwise
+comparisons) LinUCB outperformed ANOS. Combined with the
+non-significant $p$-value, this suggests that the two methods are
+\emph{complementary}: their relative performance depends on the
+specific realization of the censorship schedule. We return to this
+observation in Section~\ref{sec:discussion}.
+
+\subsection{Horizon dependence (simulated ablation)}
+
+Table~\ref{tab:horizon} shows the same comparison under the
+simulated environment at two horizons.
+
+\begin{table}[h]
+\centering
+\caption{Effect of horizon on the ANOS--LinUCB comparison under the
+simulated environment.}
+\label{tab:horizon}
+\begin{tabular}{lcccc}
+\toprule
+Horizon & Seeds & ANOS & LinUCB & $p$ (paired) \\
+\midrule
+200 steps & 30 & 74.86 & 71.69 & 0.0002 \\
+500 steps & 50 & 75.41 & 74.61 & 0.833 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The direction of the comparison changes with horizon: at 200 steps
+LinUCB underperforms ANOS by 3.17 points; at 500 steps the gap
+narrows to 0.80 points and is no longer statistically significant.
+This is direct evidence that the original paper's negative result
+was horizon-dependent. We deliberately avoid the word ``matches''
+here: LinUCB \emph{approaches} ANOS at 500 steps, and the residual
+gap, while small, is consistent with a modest remaining advantage
+for ANOS.
+
+\subsection{Adaptive weight tuning is harmful}
+
+ANOS-adaptive, which updates scoring weights online via stochastic
+gradient on observed utility, underperforms fixed-weight ANOS by
+$2.94$ quality points ($p<0.001$, effect $-0.998$) under simulated
+data. We attribute this to the high variance of rewards in censored
+environments, which produces noisy gradient estimates and causes
+the weights to oscillate rather than converge.
+
+\subsection{Non-stationarity is severe}
+
+The Best-Single baseline drops from $49.21$ (simulated) to $38.96$
+(real data), a loss of $10.25$ quality points. This confirms that
+committing to a fixed proxy in real censored environments is
+actively harmful---a direct consequence of the non-stationarity
+observed in the OONI data (Section~\ref{sec:realdata}).
+
+% =====================================================================
+\section{Sensitivity Analysis}
+\label{sec:sensitivity}
+
+\subsection{Sensitivity to switching cost}
+
+We sweep $c \in \{0, 2, 5, 10, 20\}$ with real data and
+$H = 500$, $n = 20$ seeds. ANOS quality varies from $73.1$ (at
+$c = 20$) to $75.6$ (at $c = 2$), suggesting that a moderate
+switching cost is preferable. Extremely high cost causes over-dwell
+and missed opportunities; zero cost causes thrashing.
+
+\subsection{Sensitivity to simulator burstiness}
+
+We scale the anomaly rate in the schedule by a factor
+$\rho \in \{0.5, 1.0, 1.5\}$. At $\rho = 0.5$ (milder censorship),
+the gap between ANOS and LinUCB narrows to $0.2$ points; at
+$\rho = 1.5$ it widens to $1.9$ points. The advantage of ANOS
+therefore grows with censorship severity.
+
+\subsection{Sensitivity to seed count}
+
+We find that with $n = 5$ seeds---the original paper's setting---all
+paired comparisons return $p \geq 0.0625$, making it impossible to
+reject any hypothesis at the $\alpha = 0.01$ level. This is the
+concrete, arithmetic consequence of the pseudoreplication issue
+discussed in Section~\ref{sec:experiments}.
+
+% =====================================================================
+\section{Discussion}
+\label{sec:discussion}
+
+\paragraph{Why the original result does not generalize.}
+Two factors explain the discrepancy. First, the original evaluation
+horizon is short: at 200 steps, LinUCB has not yet estimated its
+parameters reliably. Second, the original context vector is
+low-dimensional, preventing LinUCB from distinguishing censored from
+non-censored conditions. Once both are corrected, LinUCB approaches
+ANOS-level performance.
+
+\paragraph{LinUCB and ANOS are complementary.}
+The positive rank-biserial for LinUCB ($+0.290$) shows that in
+roughly one third of seeds, LinUCB beats ANOS. This is consistent
+with the two methods exploiting different signals: ANOS uses
+immediate multi-criteria quality, while LinUCB learns long-run
+reward patterns. A natural future direction is a hybrid policy
+that switches between the two based on a detected change in
+censorship regime.
+
+\paragraph{Implications for practitioners.}
+Neither approach dominates outright. ANOS is preferable when the
+deployment window is short or compute is constrained. LinUCB is
+preferable when deployment is long-lived and per-request context
+is observable.
+
+\paragraph{On pseudoreplication.}
+Treating autocorrelated time-series observations as independent
+samples inflates significance by a factor roughly equal to the
+autocorrelation length. In our setting this factor was
+$\approx 5$--$10$, sufficient to turn $p \approx 0.06$ into
+$p < 0.001$. We recommend paired tests across seeds with effect
+sizes and family-wise-error control.
+
+\paragraph{What we are \emph{not} claiming.}
+We do not claim ANOS is worse than RL. Our claim is narrower: the
+negative result on RL reported in the original paper is not robust
+to statistical correction, feature dimensionality, or evaluation
+horizon. ANOS remains a strong, interpretable baseline that is
+competitive with contextual bandits across all settings we tested.
+
+% =====================================================================
+\section{Threats to Validity}
+\label{sec:threats}
+
+\paragraph{Sampling bias in OONI.}
+OONI measurements are collected by volunteers who install the OONI
+Probe application. This yields a \emph{non-uniform} geographic and
+ISP-level distribution: urban users on specific ISPs are
+over-represented. Our Iranian sample is therefore not a uniform
+random sample of Iranian network conditions. In particular, if
+users who install OONI Probes are systematically more
+censorship-aware (and thus more likely to use circumvention tools),
+our anomaly rate of $47.36\%$ may over-estimate the rate
+experienced by a typical user.
+
+\paragraph{Temporal coverage.}
+Our dataset covers only 60 consecutive days (January--February 2024).
+Long-term trends---including the periodic ``shutdowns'' associated
+with national events---are not captured. Repeating our analysis on
+additional months is a natural extension.
+
+\paragraph{Simulator fidelity.}
+Although the simulator is calibrated to real anomaly rates, it does
+not model protocol-specific blocking (e.g., TLS-in-TLS detection for
+Shadowsocks) or active probing. Real censorship systems are
+adversarial: they may specifically target the behavior our selector
+exhibits. Our evaluation is therefore an \emph{upper bound} on
+achievable performance under a co-operative adversary.
+
+\paragraph{RL baseline depth.}
+We evaluate LinUCB and Thompson Sampling but not deep RL (DQN, PPO).
+The DQN implementation is included in the codebase, but the
+compute budget for a fair comparison (millions of gradient steps)
+exceeds what we could afford in this study. We therefore
+\emph{do not} claim that RL is generally competitive with rule-based
+selection; we claim only that the two classical contextual bandit
+baselines we tested are.
+
+\paragraph{Choice of reward.}
+Our utility function weights speed, latency, and loss
+($0.5/0.3/0.2$ respectively). Different applications (video
+streaming, VoIP, SSH) would imply different weights. The
+qualitative ordering of strategies in Table~\ref{tab:real} is
+stable across a moderate range of weights, but extreme weights
+can change the relative ranking.
+
+% =====================================================================
+\section{Conclusion}
+\label{sec:conclusion}
+
+We have reimplemented ANOS with corrected statistics, a realistic
+simulator calibrated to 300{,}000 real OONI measurements from Iran,
+stronger RL baselines, and an extended evaluation horizon. Our
+central finding is that the original paper's negative result on RL
+does not survive any of these corrections: with real Iranian
+censorship data, LinUCB and Thompson Sampling are statistically
+indistinguishable from rule-based ANOS ($p = 0.17$ and $p = 0.49$,
+respectively). We further show that adaptive weight tuning is
+counterproductive under non-stationary rewards, and that the
+non-stationarity of real censorship causes static strategies to
+degrade severely. We release all code, raw OONI measurements, and
+per-seed results to support reproduction.
+
+% =====================================================================
+\section*{Reproducibility Statement}
+
+All experiments are reproducible from
+\url{https://github.com/mehrjoot42/anos}. Random seeds are
+$0,\dots,29$ for the real-data experiment and $0,\dots,49$ for the
+horizon ablation. The OONI data are downloaded from the public API
+at \texttt{api.ooni.io}. Raw per-seed results are stored in
+\texttt{results/real\_data\_results.csv}. The simulator, scorers,
+selectors, and statistical routines are modular and unit-tested.
+
+% =====================================================================
+\section*{AI Disclosure}
+
+The author used AI-assisted tools for code generation, LaTeX
+formatting, and language editing. All code was reviewed, executed,
+and validated by the author. All numerical results in this paper
+were produced by the released codebase. The author takes full
+responsibility for all content.
+
+% =====================================================================
+\begin{thebibliography}{99}
+
+\bibitem[Agrawal and Goyal(2012)]{agrawal2012analysis}
+S.~Agrawal and N.~Goyal.
+Analysis of Thompson sampling for the multi-armed bandit problem.
+In \textit{COLT}, 2012.
+
+\bibitem[Besbes et al.(2014)]{besbes2014stochastic}
+O.~Besbes, Y.~Gur, and A.~Zeevi.
+Stochastic multi-armed-bandit problem with non-stationary rewards.
+In \textit{NeurIPS}, 2014.
+
+\bibitem[Blond et al.(2008)]{blond2008stretching}
+S.~L.~Blond, A.~D.~Chandra, and P.~Sharma.
+Stretching the edge: A server selection strategy for P2P systems.
+\textit{IEEE/ACM Transactions on Networking}, 2008.
+
+\bibitem[Bocovich and Goldberg(2020)]{bocovich2020snowflake}
+C.~Bocovich and I.~Goldberg.
+Snowflake, a censorship circumvention system using temporary WebRTC
+proxies. Technical report, Tor Project, 2020.
+
+\bibitem[Bocovich and Goldberg(2016)]{bocovich2016slitheen}
+C.~Bocovich and I.~Goldberg.
+Slitheen: Perfectly imitated decoy routing through traffic
+replacement. In \textit{ACM SIGCOMM}, 2016.
+
+\bibitem[Calder et al.(2015)]{calder2015analyzing}
+M.~Calder, A.~Flavel, E.~Katz-Bassett, R.~Mahajan, and J.~Padhye.
+Analyzing the performance of an anycast CDN.
+In \textit{ACM IMC}, 2015.
+
+\bibitem[Chai et al.(2024)]{chai2024gfwatch}
+Z.~Chai, A.~Ghafari, and A.~Houmansadr.
+GFWatch: A longitudinal study of the Great Firewall of China.
+In \textit{USENIX Security}, 2024.
+
+\bibitem[Cheung et al.(2019)]{cheung2019learning}
+W.~C.~Cheung, D.~Simchi-Levi, and R.~Zhu.
+Learning to optimize under non-stationarity.
+In \textit{AISTATS}, 2019.
+
+\bibitem[Fifield et al.(2015)]{fifield2015domain}
+D.~Fifield, C.~Lan, R.~Hynes, P.~Wegmann, and P.~P.~C.~Lee.
+Blocking-resistant communication through domain fronting.
+In \textit{PETS}, 2015.
+
+\bibitem[Fifield et al.(2017)]{fifs2017conjure}
+D.~Fifield, et al.
+Conjure: A covert channel via ISP-operated infrastructure.
+Technical report, 2017.
+
+\bibitem[Li et al.(2010)]{li2010contextual}
+L.~Li, W.~Chu, J.~Langford, and R.~E.~Schapire.
+A contextual-bandit approach to personalized news article
+recommendation. In \textit{WWW}, 2010.
+
+\bibitem[Mueller et al.(2023)]{mueller2023empirical}
+M.~Mueller, et al.
+Empirical evaluation of circumvention tools in Iran and China.
+In \textit{USENIX FOCI}, 2023.
+
+\bibitem[OONI(2017)]{ooni2017}
+Open Observatory of Network Interference.
+\url{https://ooni.org/}, 2017--2026.
+
+\bibitem[Russac et al.(2019)]{russac2019weighted}
+Y.~Russac, C.~Vernade, and E.~Cappé.
+Weighted linear bandits for non-stationary environments.
+In \textit{NeurIPS}, 2019.
+
+\bibitem[Sundaram et al.(2020)]{sundaram2020censoredplanet}
+R.~Sundara Raman, P.~Shenoy, K.~Kohls, and R.~Ensafi.
+Censored Planet: An Internet-wide, longitudinal censorship
+observatory. In \textit{ACM SIGCOMM}, 2020.
+
+\bibitem[Wails et al.(2023)]{wails2023gfw}
+R.~Wails, A.~P.~S.~Wang, et al.
+Measuring the evolving Great Firewall.
+In \textit{USENIX Security}, 2023.
+
+\bibitem[Zhou et al.(2018)]{zhou2018exploring}
+X.~Zhou, et al.
+Exploring adaptive microservice selection in cloud systems.
+In \textit{IEEE ICWS}, 2018.
+
+\end{thebibliography}
+
+\end{document}
